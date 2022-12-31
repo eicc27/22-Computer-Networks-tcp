@@ -15,6 +15,7 @@
 
 #ifndef PROJECT_2_15_441_INC_BACKEND_H_
 #define PROJECT_2_15_441_INC_BACKEND_H_
+#define MAX_BUF_SIZE 1024//缓存区大小
 
 #include "cmu_tcp.h"
 
@@ -26,5 +27,6 @@
 void* begin_backend(void* in);
 
 cmu_tcp_header_t check_for_data(cmu_socket_t *sock, cmu_read_mode_t flags);
+int tcp_handshake(cmu_socket_t *sock) ;
 
 #endif  // PROJECT_2_15_441_INC_BACKEND_H_

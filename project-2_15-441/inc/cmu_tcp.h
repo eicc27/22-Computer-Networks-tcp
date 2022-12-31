@@ -33,10 +33,12 @@ typedef enum {
 	TCP_SYN_RCVD,
 	TCP_SYN_SEND,
 	TCP_ESTABLISHED,
+  TCP_ERROR,
 } tcp_state_t;
 
 typedef struct {
   uint32_t next_seq_expected;
+  uint32_t next_ack_expected;
   uint32_t last_ack_received;
   uint32_t last_seq_received;
   uint32_t advertised_window;
