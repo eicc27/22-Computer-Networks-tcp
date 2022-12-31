@@ -27,9 +27,19 @@
 #define EXIT_ERROR -1
 #define EXIT_FAILURE 1
 
+typedef enum {
+	TCP_CLOSED,
+	TCP_LISTEN,
+	TCP_SYN_RCVD,
+	TCP_SYN_SEND,
+	TCP_ESTABLISHED,
+} tcp_state_t;
+
 typedef struct {
   uint32_t next_seq_expected;
   uint32_t last_ack_received;
+  uint32_t last_seq_received;
+  uint32_t advertised_window;
   pthread_mutex_t ack_lock;
 } window_t;
 
@@ -61,6 +71,8 @@ typedef struct {
   int dying;
   pthread_mutex_t death_lock;
   window_t window;
+  // added
+  tcp_state_t tcp_state;
 } cmu_socket_t;
 
 /*

@@ -16,11 +16,15 @@
 #ifndef PROJECT_2_15_441_INC_BACKEND_H_
 #define PROJECT_2_15_441_INC_BACKEND_H_
 
+#include "cmu_tcp.h"
+
 /**
  * Launches the CMU-TCP backend.
  *
  * @param in the socket to be used for backend processing.
  */
 void* begin_backend(void* in);
+
+cmu_tcp_header_t check_for_data(cmu_socket_t *sock, cmu_read_mode_t flags);
 
 #endif  // PROJECT_2_15_441_INC_BACKEND_H_

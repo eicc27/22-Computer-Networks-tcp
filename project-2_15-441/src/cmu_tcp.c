@@ -19,9 +19,74 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "backend.h"
+
+int tcp_handshake_client(cmu_socket_t *sock) {
+  srand((unsigned)time(NULL));
+  uint8_t *packet;
+  cmu_tcp_header_t header;
+  uint32_t seq, ack;
+  switch (sock->tcp_state) {
+    case TCP_CLOSED: { /* first time */
+      seq = 0;         // rand() % MAXSEQ;
+      /* client 发送SYN */
+      packet = create_packet(sock->my_port, ntohs(sock->conn.sin_port), seq, 0,
+                             sizeof(cmu_tcp_header_t), sizeof(cmu_tcp_header_t),
+                             SYN_FLAG_MASK, 0, 0, NULL, NULL, 0);
+      sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
+             (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+      free(packet);
+      sock->tcp_state = TCP_SYN_SEND;
+      sock->window.last_ack_received = seq;
+      sock->window.last_seq_received = 0;
+      break;
+    }
+    case TCP_SYN_SEND: { /* after send */
+      header = check_for_data(sock, TIMEOUT);
+      if ((get_flags(&header)) == (SYN_FLAG_MASK | ACK_FLAG_MASK)) {
+        ack = get_seq(&header) + 1;
+        seq = get_ack(&header);
+        sock->window.advertised_window = get_advertised_window(&header);
+        packet =
+            create_packet(sock->my_port, ntohs(sock->conn.sin_port), seq, ack,
+                          sizeof(cmu_tcp_header_t), sizeof(cmu_tcp_header_t),
+                          ACK_FLAG_MASK, 1024, 0, NULL, NULL, 0);
+        sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
+               (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+        free(packet);
+        sock->tcp_state = TCP_ESTABLISHED;
+        sock->window.last_ack_received = ack;
+        sock->window.last_seq_received = seq;
+      } else {
+        sock->tcp_state = TCP_CLOSED;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return sock->tcp_state;
+}
+
+int tcp_handshake(cmu_socket_t *sock) {
+  while (sock->tcp_state != TCP_ESTABLISHED) {
+    switch (sock->type) {
+      case TCP_INITIATOR:
+        tcp_handshake_client(sock);
+        break;
+      case TCP_LISTENER:
+        // tcp_handshake_server(sock);
+        break;
+      default:
+        break;
+    }
+  }
+  return 0;
+}
 
 int cmu_socket(cmu_socket_t *sock, const cmu_socket_type_t socket_type,
                const int port, const char *server_ip) {
@@ -104,7 +169,12 @@ int cmu_socket(cmu_socket_t *sock, const cmu_socket_type_t socket_type,
   }
   getsockname(sockfd, (struct sockaddr *)&my_addr, &len);
   sock->my_port = ntohs(my_addr.sin_port);
-
+  // added
+  tcp_handshake(sock);
+  if (sock->tcp_state != TCP_ESTABLISHED) {
+    fprintf(stderr, "TCP handshake failed\n");
+    return EXIT_FAILURE;
+  }
   pthread_create(&(sock->thread_id), NULL, begin_backend, (void *)sock);
   return EXIT_SUCCESS;
 }
