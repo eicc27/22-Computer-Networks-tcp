@@ -17,6 +17,7 @@
 
 #include "backend.h"
 
+#include <unistd.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -60,7 +61,7 @@ int has_been_acked(cmu_socket_t *sock, uint32_t seq) {
 void handle_message(cmu_socket_t *sock, uint8_t *pkt) {
   cmu_tcp_header_t *hdr = (cmu_tcp_header_t *)pkt;
   uint8_t flags = get_flags(hdr);
-
+  /*判别接收的包类型，以及确认包顺序是否正确*/
   switch (flags) {
     case ACK_FLAG_MASK: {
       uint32_t ack = get_ack(hdr);
@@ -140,6 +141,7 @@ cmu_tcp_header_t check_for_data(cmu_socket_t *sock, cmu_read_mode_t flags) {
   while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
   }
   switch (flags) {
+    //阻塞接受，直到有数据到达，否则一直等待
     case NO_FLAG:
       len = recvfrom(sock->socket, &hdr, sizeof(cmu_tcp_header_t), MSG_PEEK,
                      (struct sockaddr *)&(sock->conn), &conn_len);
@@ -199,6 +201,7 @@ void single_send(cmu_socket_t *sock, uint8_t *data, int buf_len) {
   size_t conn_len = sizeof(sock->conn);
 
   int sockfd = sock->socket;
+  /*每次一个包最多发MSS个字节，数据包过长要分多个包发送*/
   if (buf_len > 0) {
     while (buf_len != 0) {
       uint16_t payload_len = MIN((uint16_t)buf_len, (uint16_t)MSS);
@@ -219,6 +222,7 @@ void single_send(cmu_socket_t *sock, uint8_t *data, int buf_len) {
                           ext_len, ext_data, payload, payload_len);
       buf_len -= payload_len;
 
+      /*这里每个发出去的包都要等对方确认才能继续发下一个包，实现滑动窗口和超时重传可以解决这个问题*/
       while (1) {
         // FIXME: This is using stop and wait, can we do better?
         sendto(sockfd, msg, plen, 0, (struct sockaddr *)&(sock->conn),
@@ -241,19 +245,22 @@ void *begin_backend(void *in) {
   uint8_t *data;
 
   while (1) {
+    /*当没有线程正在对sock->dying操作(death_lock处于可以获得状态时)，取出sock->dying内的值*/
     while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
     }
     death = sock->dying;
     pthread_mutex_unlock(&(sock->death_lock));
-
+    /*当没有线程sock正在发送包时，获取sending_len*/
     while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
     }
     buf_len = sock->sending_len;
-
+    /*sock关闭并且sending_len为0时，结束进程*/
     if (death && buf_len == 0) {
       break;
     }
-
+    /*如果sock要发出的数据长度(sending_len)不为0,就把要发出的数据(sending_buf)拷贝到data中，并将要发出的数据长度置为0(sending_len=0),释放sending_buf的内存
+      释放sock的send锁，将data通过single_send发出.简而言之，将sock中要发的数据取到data中，用single_send发送data.
+    */
     if (buf_len > 0) {
       data = malloc(buf_len);
       memcpy(data, sock->sending_buf, buf_len);
@@ -284,7 +291,7 @@ void *begin_backend(void *in) {
   return NULL;
 }
 
-/*超时重发，最多重新发五次，每次重传在第1,3,7,15,31秒，如果对方有回应则返回0,否则返回1*/
+/*建立tcp链接的超时重发，最多重新发五次，每次重传在第1,3,7,15,31秒，如果对方有回应则返回0,否则返回1*/
 int retransmit(cmu_socket_t *sock, cmu_tcp_header_t *hdr) {
   int flag;
   uint16_t adv_window;
@@ -303,7 +310,7 @@ int retransmit(cmu_socket_t *sock, cmu_tcp_header_t *hdr) {
   uint8_t *packet;
   socklen_t conn_len = sizeof(sock->conn);
   packet = create_packet(sock->my_port, ntohs(sock->conn.sin_port),
-                         sock->window.next_ack_expected - 1,
+                         sock->window.last_ack_received,
                          sock->window.next_seq_expected,
                          sizeof(cmu_tcp_header_t), sizeof(cmu_tcp_header_t),
                          flag, adv_window, 0, NULL, NULL, 0);
@@ -318,7 +325,7 @@ int retransmit(cmu_socket_t *sock, cmu_tcp_header_t *hdr) {
                &conn_len);
       return 0;
     }
-    perror("retran");
+    //perror("retran");
     sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
            (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
     second = second * 2;
@@ -354,19 +361,20 @@ void tcp_handshake_client(cmu_socket_t *sock) {
       /*发送完第一个SYN包，发起第一次握手，client进入等待server回应(等待server发起第二次握手)状态*/
       sock->tcp_state = TCP_SYN_SEND;
       sock->window.last_ack_received = seq;
-      sock->window.last_seq_received = 0;
-      sock->window.next_ack_expected = seq + 1;
       sock->window.next_seq_expected = 0;
       break;
     }
     case TCP_SYN_SEND: {
+      //sleep(5);//用于验证server端的超时重发
       /*超时重发五次*/
       if (retransmit(sock, &header) != 0) {
-        sock->tcp_state = TCP_CLOSED;
+        sock->tcp_state = TCP_ERROR;
+        break;
       };
+      
       /*确认服务端发送的flag标志被置为1,说明服务端正在确认同步,接收到的ack需要和预期的ack相同的判断,否则关闭链接，并未要求实现client超时重传*/
       if ((get_flags(&header)) == (SYN_FLAG_MASK | ACK_FLAG_MASK) &&
-          get_ack(&header) == sock->window.next_ack_expected) {
+          get_ack(&header) == sock->window.last_ack_received+1) {
         seq = get_ack(&header);
         ack = get_seq(&header) + 1;
 
@@ -379,8 +387,8 @@ void tcp_handshake_client(cmu_socket_t *sock) {
                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
         free(packet);
         sock->tcp_state = TCP_ESTABLISHED;
-        sock->window.last_ack_received = ack;
-        sock->window.last_seq_received = seq;
+        sock->window.last_ack_received = seq;
+        sock->window.next_seq_expected = ack;
       } else {
         sock->tcp_state = TCP_ERROR;
       }
@@ -404,7 +412,6 @@ void tcp_handshake_server(cmu_socket_t *sock) {
       sock->tcp_state = TCP_LISTEN;
       break;
     case TCP_LISTEN: { /* first time */
-
       /* server堵塞直到有SYN到达 */
       header = check_for_data(sock, NO_FLAG);
       /*只要flag里的SYN标志位为1,就说明SYN packer 有效，若SYN packet
@@ -413,7 +420,7 @@ void tcp_handshake_server(cmu_socket_t *sock) {
         /*计算即将从server发出的ack值*/
         uint32_t ack = get_seq(&header) + 1;
         /*随机生成server的seq值*/
-        uint32_t seq = 20;  // rand() % MAXSEQ;
+        uint32_t seq = rand();  // rand() % MAXSEQ;
         /* server发出一个SYN和ACK均有效的包，告知client最大可接受的缓存区大小 */
         packet = create_packet(
             sock->my_port, ntohs(sock->conn.sin_port), seq, ack,
@@ -422,31 +429,39 @@ void tcp_handshake_server(cmu_socket_t *sock) {
         sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
         free(packet);
+
         /*发送包就已经发起第二次握手，进入等待client发起第三次握手*/
+        
         sock->tcp_state = TCP_SYN_RCVD;
-        sock->window.last_ack_received = 0;
-        sock->window.last_seq_received = get_seq(&header);
-        sock->window.next_ack_expected = seq + 1;
+        sock->window.last_ack_received = seq;
         sock->window.next_seq_expected = ack;
       }
       break;
     }
     case TCP_SYN_RCVD: { /* after recv */
+
       /*如果没有收到client发过来的ACK包，就要重新发SYN，ACK包，最多重新发五次，每次重传在第1,3,7,15,31秒*/
       if (retransmit(sock, &header) != 0) {
         sock->tcp_state = TCP_LISTEN;
+        break;
       };
+      
 
       /**/
       int flag = ((get_flags(&header) & ACK_FLAG_MASK) == ACK_FLAG_MASK);
       uint32_t ack = get_seq(&header);
       uint32_t seq = get_ack(&header);
+      /*TODO(非必做)
+       *如果收到对方觉得这边超时而发出的重复包，要忽略(只可能是第一次握手，client端发出多次同步请求(即SYN包)
+       *如果是SYN包，而且seq和之前收到的相同，则可以确定是重复的包,要重新接收下一个包 
+      */
+
       sock->window.advertised_window = get_advertised_window(&header);
-      if (flag && get_ack(&header) == sock->window.next_ack_expected &&
+      if (flag && get_ack(&header) == sock->window.last_ack_received+1 &&
           get_seq(&header) == sock->window.next_seq_expected) {
         sock->tcp_state = TCP_ESTABLISHED;
-        sock->window.last_ack_received = ack;
-        sock->window.last_seq_received = seq;
+        sock->window.last_ack_received = seq;
+        sock->window.next_seq_expected = ack;
       } else {
         sock->tcp_state = TCP_LISTEN;
       }

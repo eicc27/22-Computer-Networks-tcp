@@ -24,7 +24,8 @@ void functionality(cmu_socket_t *sock) {
   uint8_t buf[9898];
   int read;
   FILE *fp;
-
+  printf("send seq:%d",sock->window.last_ack_received);
+  printf("send ack:%d",sock->window.next_seq_expected);
   cmu_write(sock, "hi there", 8);
   cmu_write(sock, " https://www.youtube.com/watch?v=dQw4w9WgXcQ", 44);
   cmu_write(sock, " https://www.youtube.com/watch?v=Yb6dZ1IFlKc", 44);
@@ -68,6 +69,7 @@ int main() {
   portno = (uint16_t)atoi(serverport);
 
   if (cmu_socket(&socket, TCP_INITIATOR, portno, serverip) < 0) {
+    printf("tcp fail\n");
     exit(EXIT_FAILURE);
   }
 

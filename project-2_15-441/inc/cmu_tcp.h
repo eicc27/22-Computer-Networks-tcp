@@ -38,9 +38,7 @@ typedef enum {
 
 typedef struct {
   uint32_t next_seq_expected;
-  uint32_t next_ack_expected;
   uint32_t last_ack_received;
-  uint32_t last_seq_received;
   uint32_t advertised_window;
   pthread_mutex_t ack_lock;
 } window_t;
