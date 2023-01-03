@@ -358,6 +358,7 @@ void tcp_handshake_client(cmu_socket_t *sock) {
       sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
              (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
       free(packet);
+      printf("Client: 1st handshake initiated\n");
       /*发送完第一个SYN包，发起第一次握手，client进入等待server回应(等待server发起第二次握手)状态*/
       sock->tcp_state = TCP_SYN_SEND;
       sock->window.last_ack_received = seq;
@@ -369,6 +370,7 @@ void tcp_handshake_client(cmu_socket_t *sock) {
       /*超时重发五次*/
       if (retransmit(sock, &header) != 0) {
         sock->tcp_state = TCP_ERROR;
+        printf("Client: handshake error\n");
         break;
       };
       
@@ -386,6 +388,7 @@ void tcp_handshake_client(cmu_socket_t *sock) {
         sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
         free(packet);
+        printf("Client: 3rd handshake initiated, TCP established\n");
         sock->tcp_state = TCP_ESTABLISHED;
         sock->window.last_ack_received = seq;
         sock->window.next_seq_expected = ack;
@@ -429,7 +432,7 @@ void tcp_handshake_server(cmu_socket_t *sock) {
         sendto(sock->socket, packet, sizeof(cmu_tcp_header_t), 0,
                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
         free(packet);
-
+        printf("Server: 2nd handshake initiated\n");
         /*发送包就已经发起第二次握手，进入等待client发起第三次握手*/
         
         sock->tcp_state = TCP_SYN_RCVD;
