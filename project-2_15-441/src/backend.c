@@ -293,6 +293,7 @@ void *begin_backend(void *in) {
 
 /*建立tcp链接的超时重发，最多重新发五次，每次重传在第1,3,7,15,31秒，如果对方有回应则返回0,否则返回1*/
 int retransmit(cmu_socket_t *sock, cmu_tcp_header_t *hdr) {
+  printf("Retransmission: ack %d\n", hdr->ack_num);
   int flag;
   uint16_t adv_window;
   switch (sock->type) {
