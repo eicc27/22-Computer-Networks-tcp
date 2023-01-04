@@ -147,4 +147,12 @@ int cmu_write(cmu_socket_t* sock, const void* buf, int length);
  * You can declare more functions after this point if you need to.
  */
 
+#define SIZE0 512
+#define SIZE1 4096
+#define SIZE2 32 * 1024
+#define SIZE3 256 * 1024
+#define SIZE4 2 * 1024 * 1024
+char* generate_random_data(unsigned long size);
+void timer(const char* fname);
+
 #endif  // PROJECT_2_15_441_INC_CMU_TCP_H_

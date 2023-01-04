@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -199,4 +200,20 @@ int cmu_write(cmu_socket_t *sock, const void *buf, int length) {
 
   pthread_mutex_unlock(&(sock->send_lock));
   return EXIT_SUCCESS;
+}
+
+char* generate_random_data(unsigned long size) {
+  char *data = calloc(size, 1);
+  for (unsigned long i = 0; i < size; i++) {
+    data[i] = 's';
+  }
+  return data;
+}
+
+void timer(const char* fname) {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  FILE *f = fopen(fname, "a");
+  printf("%ld, %ld", tv.tv_sec, tv.tv_usec);
+  // fprintf(f, "sec: %ld, usec: %ld\n", tv.tv_sec, tv.tv_usec);
 }

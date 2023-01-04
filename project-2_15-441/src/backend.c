@@ -25,6 +25,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/time.h>
 
 #include "cmu_packet.h"
 #include "cmu_tcp.h"
